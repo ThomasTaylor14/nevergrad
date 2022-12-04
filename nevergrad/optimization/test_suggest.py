@@ -78,7 +78,7 @@ def good_at_suggest(name: str) -> bool:
         "PortfolioDiscreteOne",
         "FastGADiscreteOne",
     ]
-    return not any(k in name for k in keywords)
+    return all(k not in name for k in keywords)
 
 
 @skip_win_perf  # type: ignore

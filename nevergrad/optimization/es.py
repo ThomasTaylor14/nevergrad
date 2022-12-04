@@ -123,7 +123,7 @@ class EvolutionStrategy(base.ConfiguredOptimizer):
         if only_offsprings:
             assert offsprings is not None, "only_offsprings only work if offsprings is not None (non-DE mode)"
         assert 0 <= recombination_ratio <= 1
-        assert ranker in ["simple", "nsga2"]
+        assert ranker in {"simple", "nsga2"}
         self.recombination_ratio = recombination_ratio
         self.popsize = popsize
         self.offsprings = offsprings

@@ -78,7 +78,7 @@ class MultiValue:
         """
         self._minimum = min(self._minimum, y)
         self.mean = (self.count * self.mean + y) / float(self.count + 1)
-        self.square = (self.count * self.square + y * y) / float(self.count + 1)
+        self.square = (self.count * self.square + y **2) / float(self.count + 1)
         self.square = max(self.square, self.mean**2)
         self.count += 1
         factor = math.sqrt(float(self.count) / float(self.count - 1.0))
@@ -256,9 +256,7 @@ class Pruning:
         self._num_prunings = 0  # for testing it is not called too often
 
     def __call__(self, archive: Archive[MultiValue]) -> Archive[MultiValue]:
-        if len(archive) < self.max_len:
-            return archive
-        return self._prune(archive)
+        return archive if len(archive) < self.max_len else self._prune(archive)
 
     def _prune(self, archive: Archive[MultiValue]) -> Archive[MultiValue]:
         self._num_prunings += 1

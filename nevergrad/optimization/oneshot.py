@@ -233,7 +233,7 @@ class RandomSearchMaker(base.ConfiguredOptimizer):
         scale: tp.Union[float, str] = 1.0,
         recommendation_rule: str = "pessimistic",
     ) -> None:
-        assert sampler in ["gaussian", "cauchy", "parametrization"]
+        assert sampler in {"gaussian", "cauchy", "parametrization"}
         super().__init__(_RandomSearch, locals())
 
 

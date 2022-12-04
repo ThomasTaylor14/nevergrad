@@ -47,7 +47,7 @@ def test_crossover() -> None:
     doubledoerr=("doubledoerr_discrete_mutation",),
     doerr=("doerr_discrete_mutation",),
 )
-def test_run_with_array(name: str) -> None:
+def test_run_withray(name: str) -> None:
     data = [0.1, -0.1, 1, -0.2] * 3
     mutator = Mutator(np.random.RandomState(12))
     func = getattr(mutator, name)

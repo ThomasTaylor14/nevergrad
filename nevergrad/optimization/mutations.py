@@ -21,9 +21,7 @@ class Mutator:
         1/arity, 2/arity, ..., (arity-1)/arity.
         """
         w = v
-        while discretization.threshold_discretization([w], arity) == discretization.threshold_discretization(
-            [v], arity
-        ):
+        while discretization.threshold_discretization([w], arity) == discretization.threshold_discretization([w], arity):
             w = self.random_state.normal(0.0, 1.0)
         return w
 

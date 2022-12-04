@@ -97,11 +97,8 @@ class Optimizer:  # pylint: disable=too-many-instance-attributes
         self._constraints_manager = utils.ConstraintManager()
         self._penalize_cheap_violations = False
 
-        self.parametrization = (
-            parametrization
-            if not isinstance(parametrization, (int, np.int_))
-            else p.Array(shape=(parametrization,))
-        )
+        self.parametrization = p.Array(shape=(parametrization,)) if isinstance(parametrization, (int, np.int_)) else parametrization
+
         self.parametrization.freeze()  # avoids issues!
         if not self.dimension:
             raise ValueError("No variable to optimize in this parametrization.")
@@ -232,7 +229,7 @@ class Optimizer:  # pylint: disable=too-many-instance-attributes
                 size=size, subset=subset, subset_tentatives=subset_tentatives
             )
         )
-        return pareto if pareto else [self.provide_recommendation()]
+        return pareto or [self.provide_recommendation()]
 
     def dump(self, filepath: tp.Union[str, Path]) -> None:
         """Pickles the optimizer into a file."""
@@ -336,7 +333,7 @@ class Optimizer:  # pylint: disable=too-many-instance-attributes
             loss = float(loss)
             # Non-sense values including NaNs should not be accepted.
             # We do not use max-float as various later transformations could lead to greater values.
-            if not loss < 5.0e20:  # pylint: disable=unneeded-not
+            if loss >= 5.0e20:  # pylint: disable=unneeded-not
                 self._warn(
                     f"Clipping very high value {loss} in tell (rescale the cost function?).",
                     errors.LossTooLargeWarning,
@@ -446,17 +443,8 @@ class Optimizer:  # pylint: disable=too-many-instance-attributes
                 best = min(self.archive.values(), key=lambda mv, n=name: mv.get_estimation(n))  # type: ignore
                 # rebuild best point may change, and which value did not track the updated value anyway
                 self.current_bests[name] = best
-            else:
-                if self.archive[x].get_estimation(name) <= self.current_bests[name].get_estimation(name):
-                    self.current_bests[name] = self.archive[x]
-                # deactivated checks
-                # if not (np.isnan(loss) or loss == np.inf):
-                #     if not self.current_bests[name].x in self.archive:
-                #         bval = self.current_bests[name].get_estimation(name)
-                #         avals = (min(v.get_estimation(name) for v in self.archive.values()),
-                #                  max(v.get_estimation(name) for v in self.archive.values()))
-                #         raise RuntimeError(f"Best value should exist in the archive at num_tell={self.num_tell})\n"
-                #                            f"Best value is {bval} and archive is within range {avals} for {name}")
+            elif self.archive[x].get_estimation(name) <= self.current_bests[name].get_estimation(name):
+                self.current_bests[name] = self.archive[x]
         if self.pruning is not None:
             self.archive = self.pruning(self.archive)
 
@@ -823,10 +811,7 @@ class ConfiguredOptimizer:
         return self._OptimizerClass.load(filepath)
 
     def __eq__(self, other: tp.Any) -> tp.Any:
-        if self.__class__ == other.__class__:
-            if self._config == other._config:
-                return True
-        return False
+        return self.__class__ == other.__class__ and self._config == other._config
 
 
 def _constraint_solver(parameter: p.Parameter, budget: int) -> p.Parameter:

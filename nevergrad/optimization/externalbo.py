@@ -38,7 +38,8 @@ def _hp_parametrization_to_dict(x, **kwargs):
 
 def _hp_dict_to_parametrization(x):
     if isinstance(x, dict) and ("args" in x) and ("kwargs" in x):
-        x["args"] = tuple([_hp_dict_to_parametrization(x["args"][str(i)]) for i in range(len(x["args"]))])
+        x["args"] = tuple(_hp_dict_to_parametrization(x["args"][str(i)]) for i in range(len(x["args"])))
+
         x["kwargs"] = {k: _hp_dict_to_parametrization(v) for k, v in x["kwargs"].items()}
         return (x["args"], x["kwargs"])
     return x
@@ -46,11 +47,8 @@ def _hp_dict_to_parametrization(x):
 
 def _get_search_space(param_name, param):
     if isinstance(param, p.Instrumentation):
-        space = {}
-        space["args"] = {
-            str(idx_param): _get_search_space(str(idx_param), param[0][idx_param])  # type: ignore
-            for idx_param in range(len(param[0].value))
-        }
+        space = {"args": {str(idx_param): _get_search_space(str(idx_param), param[0][idx_param]) for idx_param in range(len(param[0].value))}}
+
         space["kwargs"] = {
             param_name: _get_search_space(param_name, param[1][param_name])  # type: ignore
             for param_name in param[1].value.keys()

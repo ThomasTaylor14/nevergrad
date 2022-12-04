@@ -426,7 +426,7 @@ def test_optimization_discrete_with_one_sample() -> None:
 def test_smooth_discrete_one_plus_one() -> None:
     n = 35
     d = 35
-    budget = d * d // 2
+    budget = d ** 2 // 2
     parametrization = ng.p.Array(shape=(d, d), upper=1.0, lower=-1.0)
     values = []
     values_smooth = []
@@ -866,9 +866,7 @@ def test_mo_with_nan(name: str) -> None:
 def test_uniform_sampling(name: str) -> None:
     param = ng.p.Scalar(lower=-100, upper=100).set_mutation(sigma=1)
     opt = optlib.registry[name](param, budget=600, num_workers=100)
-    above_50 = 0
-    for _ in range(100):
-        above_50 += abs(opt.ask().value) > 50
+    above_50 = sum(abs(opt.ask().value) > 50 for _ in range(100))
     assert above_50 > 20  # should be around 50
 
 

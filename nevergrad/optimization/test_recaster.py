@@ -16,9 +16,7 @@ from . import optimizerlib
 
 
 def fake_caller(func: tp.Callable[[int], int]) -> int:
-    output = 0
-    for k in range(10):
-        output += func(k)
+    output = sum(func(k) for k in range(10))
     return output
 
 

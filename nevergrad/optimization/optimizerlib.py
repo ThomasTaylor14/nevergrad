@@ -126,23 +126,11 @@ class _OnePlusOne(base.Optimizer):
                     "random",
                     "optimistic",
                 ], f"Unkwnown noise handling: '{noise_handling}'"
-        assert mutation in [
-            "gaussian",
-            "cauchy",
-            "discrete",
-            "fastga",
-            "rls",
-            "doublefastga",
-            "adaptive",
-            "coordinatewise_adaptive",
-            "portfolio",
-            "discreteBSO",
-            "lengler",
-            "doerr",
-        ], f"Unkwnown mutation: '{mutation}'"
+        assert mutation in {"gaussian", "cauchy", "discrete", "fastga", "rls", "doublefastga", "adaptive", "coordinatewise_adaptive", "portfolio", "discreteBSO", "lengler", "doerr"}, f"Unkwnown mutation: '{mutation}'"
+
         if mutation == "adaptive":
             self._adaptive_mr = 0.5
-        if mutation == "coordinatewise_adaptive":
+        elif mutation == "coordinatewise_adaptive":
             self._velocity = self._rng.uniform(size=self.dimension) * arity / 4.0
             self._modified_variables = np.array([True] * self.dimension)
         self.noise_handling = noise_handling
@@ -665,9 +653,8 @@ class ParametrizedCMA(base.ConfiguredOptimizer):
         inopts: tp.Optional[tp.Dict[str, tp.Any]] = None,
     ) -> None:
         super().__init__(_CMA, locals(), as_config=True)
-        if fcmaes:
-            if diagonal:
-                raise RuntimeError("fcmaes doesn't support diagonal=True, use fcmaes=False")
+        if fcmaes and diagonal:
+            raise RuntimeError("fcmaes doesn't support diagonal=True, use fcmaes=False")
         self.scale = scale
         self.elitist = elitist
         self.popsize = popsize
@@ -721,7 +708,8 @@ class ChoiceBase(base.Optimizer):
             self._optim = self._select_optimizer_cls()(self.parametrization, self.budget, self.num_workers)
             # except:
             #    self._optim = NGOpt39._select_optimizer_cls(self)(self.parametrization, self.budget, self.num_workers)
-            self._optim = self._optim if not isinstance(self._optim, NGOptBase) else self._optim.optim
+            self._optim = self._optim.optim if isinstance(self._optim, NGOptBase) else self._optim
+
             logger.debug("%s selected %s optimizer.", *(x.name for x in (self, self._optim)))
         return self._optim
 
@@ -772,23 +760,13 @@ class CMA(ChoiceBase):  # Adds Risto's CMA to CMA.
     """Nevergrad optimizer by competence map. You might modify this one for designing your own competence map."""
 
     def _select_optimizer_cls(self) -> base.OptCls:
-        if (
-            self.budget is not None
-            and self.fully_continuous
-            and not self.has_noise
-            and self.num_objectives < 2
-        ):
-            if p.helpers.Normalizer(self.parametrization).fully_bounded:
-                return CMAbounded
-            if self.budget < 50:
-                if self.dimension <= 15:
-                    return CMAtuning
-                return CMAsmall
-            if self.num_workers > 20:
-                return CMApara
-            return CMAstd
-        else:
+        if self.budget is None or not self.fully_continuous or self.has_noise or self.num_objectives >= 2:
             return OldCMA
+        if p.helpers.Normalizer(self.parametrization).fully_bounded:
+            return CMAbounded
+        if self.budget < 50:
+            return CMAtuning if self.dimension <= 15 else CMAsmall
+        return CMApara if self.num_workers > 20 else CMAstd
 
 
 DiagonalCMA = ParametrizedCMA(diagonal=True).set_name("DiagonalCMA", register=True)
@@ -884,23 +862,28 @@ class EDA(base.Optimizer):
         if self._POPSIZE_ADAPTATION:
             self.popsize.add_value(loss)
         if len(self.children) >= self.popsize.llambda:
-            self.children = sorted(self.children, key=base._loss)
-            population_data = [c.get_standardized_data(reference=self.parametrization) for c in self.children]
-            mu = self.popsize.mu
-            arrays = population_data[:mu]
-            # covariance
-            # TODO: check actual covariance that should be used
-            centered_arrays = np.array([x - self.current_center for x in arrays])
-            cov = centered_arrays.T.dot(centered_arrays)
-            # cov = np.cov(np.array(population_data).T)
-            mem_factor = 0.9 if self._COVARIANCE_MEMORY else 0
-            self.covariance *= mem_factor
-            self.covariance += (1 - mem_factor) * cov
-            # Computing the new parent
-            self.current_center = sum(arrays) / mu  # type: ignore
-            self.sigma = np.exp(sum([np.log(c._meta["sigma"]) for c in self.children[:mu]]) / mu)
-            self.parents = self.children[:mu]
-            self.children = []
+            self._extracted_from__internal_tell_candidate_6()
+
+    # TODO Rename this here and in `_internal_tell_candidate`
+    def _extracted_from__internal_tell_candidate_6(self):
+        self.children = sorted(self.children, key=base._loss)
+        population_data = [c.get_standardized_data(reference=self.parametrization) for c in self.children]
+        mu = self.popsize.mu
+        arrays = population_data[:mu]
+        # covariance
+        # TODO: check actual covariance that should be used
+        centered_arrays = np.array([x - self.current_center for x in arrays])
+        cov = centered_arrays.T.dot(centered_arrays)
+        # cov = np.cov(np.array(population_data).T)
+        mem_factor = 0.9 if self._COVARIANCE_MEMORY else 0
+        self.covariance *= mem_factor
+        self.covariance += (1 - mem_factor) * cov
+        # Computing the new parent
+        self.current_center = sum(arrays) / mu  # type: ignore
+        self.sigma = np.exp(sum(np.log(c._meta["sigma"]) for c in self.children[:mu]) / mu)
+
+        self.parents = self.children[:mu]
+        self.children = []
 
     def _internal_tell_not_asked(self, candidate: p.Parameter, loss: tp.FloatLoss) -> None:
         raise errors.TellNotAskedNotSupportedError
@@ -956,12 +939,11 @@ class _TBPSA(base.Optimizer):
     def recommend(self) -> p.Parameter:
         if self.naive:
             return self.current_bests["optimistic"].parameter
-        else:
-            # This is NOT the naive version. We deal with noise.
-            out = self.parametrization.spawn_child()
-            with p.helpers.deterministic_sampling(out):
-                out.set_standardized_data(self.current_center)
-            return out
+        # This is NOT the naive version. We deal with noise.
+        out = self.parametrization.spawn_child()
+        with p.helpers.deterministic_sampling(out):
+            out.set_standardized_data(self.current_center)
+        return out
 
     def _internal_ask_candidate(self) -> p.Parameter:
         mutated_sigma = self.sigma * np.exp(self._rng.normal(0, 1) / np.sqrt(self.dimension))
@@ -1083,17 +1065,21 @@ class _PSO(base.Optimizer):
     def _internal_ask_candidate(self) -> p.Parameter:
         # population is increased only if queue is empty (otherwise tell_not_asked does not work well at the beginning)
         if len(self.population) < self.llambda:
-            candidate = self.parametrization.sample()
-            self.population[candidate.uid] = candidate
-            dim = self.parametrization.dimension
-            candidate.heritage["speed"] = (
-                self._rng.normal(size=dim) if self._eps is None else self._rng.uniform(-1, 1, dim)
-            )
-            self._uid_queue.asked.add(candidate.uid)
-            return candidate
+            return self._extracted_from__internal_ask_candidate_4()
         uid = self._uid_queue.ask()
         candidate = self._spawn_mutated_particle(self.population[uid])
         candidate.heritage["lineage"] = uid  # override in case it was a tell-not-asked
+        return candidate
+
+    # TODO Rename this here and in `_internal_ask_candidate`
+    def _extracted_from__internal_ask_candidate_4(self):
+        candidate = self.parametrization.sample()
+        self.population[candidate.uid] = candidate
+        dim = self.parametrization.dimension
+        candidate.heritage["speed"] = (
+            self._rng.normal(size=dim) if self._eps is None else self._rng.uniform(-1, 1, dim)
+        )
+        self._uid_queue.asked.add(candidate.uid)
         return candidate
 
     def _get_boxed_data(self, particle: p.Parameter) -> np.ndarray:
@@ -1139,13 +1125,12 @@ class _PSO(base.Optimizer):
     def _internal_tell_not_asked(self, candidate: p.Parameter, loss: tp.FloatLoss) -> None:
         # nearly same as DE
         worst: tp.Optional[p.Parameter] = None
-        if not len(self.population) < self.llambda:
+        if len(self.population) >= self.llambda:
             uid, worst = max(self.population.items(), key=lambda p: base._loss(p[1]))
             if base._loss(worst) < loss:
                 return  # no need to update
-            else:
-                del self.population[uid]
-                self._uid_queue.discard(uid)
+            del self.population[uid]
+            self._uid_queue.discard(uid)
         if "speed" not in candidate.heritage:
             candidate.heritage["speed"] = self._rng.uniform(-1.0, 1.0, self.parametrization.dimension)
         self.population[candidate.uid] = candidate
@@ -1194,7 +1179,7 @@ class ConfPSO(base.ConfiguredOptimizer):
         phig: float = 0.5 + math.log(2.0),
     ) -> None:
         super().__init__(_PSO, locals(), as_config=True)
-        assert transform in ["arctan", "gaussian", "identity"]
+        assert transform in {"arctan", "gaussian", "identity"}
         self.transform = transform
         self.popsize = popsize
         self.omega = omega
@@ -1298,7 +1283,7 @@ class _Rescaled(base.Optimizer):
 
     def rescale_candidate(self, candidate: p.Parameter, inverse: bool = False) -> p.Parameter:
         data = candidate.get_standardized_data(reference=self.parametrization)
-        scale = self.scale if not inverse else 1.0 / self.scale
+        scale = 1.0 / self.scale if inverse else self.scale
         return self.parametrization.spawn_child().set_standardized_data(scale * data)
 
     def _internal_ask_candidate(self) -> p.Parameter:
@@ -1388,7 +1373,7 @@ class SplitOptimizer(base.Optimizer):
             # if num_vars not given: we will distribute variables equally.
             assert num_optims is not None
             num_optims = int(min(num_optims, self.dimension))
-            num_vars = num_vars if num_vars else []
+            num_vars = num_vars or []
             for i in range(num_optims):
                 if len(num_vars) < i + 1:
                     num_vars += [(self.dimension // num_optims) + (self.dimension % num_optims > i)]
@@ -1622,17 +1607,15 @@ class Portfolio(base.Optimizer):
         self._warmup_budget: tp.Optional[int] = None
         if cfg.warmup_ratio is not None and budget is None:
             raise ValueError("warmup_ratio is only available if a budget is provided")
-        if not any(x is None for x in (cfg.warmup_ratio, budget)):
+        if all(x is not None for x in (cfg.warmup_ratio, budget)):
             self._warmup_budget = int(cfg.warmup_ratio * budget)  # type: ignore
 
     def _internal_ask_candidate(self) -> p.Parameter:
         # optimizer selection if budget is over
-        if self._warmup_budget is not None:
-            if len(self.optims) > 1 and self._warmup_budget < self.num_tell:
-                ind = self.current_bests["pessimistic"].parameter._meta.get("optim_index", -1)
-                if ind >= 0:  # not a tell not asked
-                    if self.num_workers == 1 or self.optims[ind].num_workers > 1:
-                        self.optims = [self.optims[ind]]  # throw away everything else
+        if self._warmup_budget is not None and len(self.optims) > 1 and self._warmup_budget < self.num_tell:
+            ind = self.current_bests["pessimistic"].parameter._meta.get("optim_index", -1)
+            if ind >= 0 and (self.num_workers == 1 or self.optims[ind].num_workers > 1):
+                self.optims = [self.optims[ind]]  # throw away everything else
         num = len(self.optims)
         for k in range(2 * num):
             self._current += 1
@@ -1641,9 +1624,8 @@ class Portfolio(base.Optimizer):
 
             if opt.num_workers > opt.num_ask - (opt.num_tell - opt.num_tell_not_asked):
                 break  # if there are workers left, use this optimizer
-            if k > num:
-                if not opt.no_parallelization:
-                    break  # if no worker is available, try the first parallelizable optimizer
+            if k > num and not opt.no_parallelization:
+                break  # if no worker is available, try the first parallelizable optimizer
         if optim_index is None:
             raise RuntimeError("Something went wrong in optimizer selection")
         opt = self.optims[optim_index]
@@ -2021,11 +2003,7 @@ class _BO(base.Optimizer):
         self._fake_function._registered.clear()
 
     def _internal_provide_recommendation(self) -> tp.Optional[tp.ArrayLike]:
-        if not self.archive:
-            return None
-        return self._normalizer.backward(
-            np.array([self.bo.max["params"][self._fake_function.key(i)] for i in range(self.dimension)])
-        )
+        return self._normalizer.backward(np.array([self.bo.max["params"][self._fake_function.key(i)] for i in range(self.dimension)])) if self.archive else None
 
 
 class ParametrizedBO(base.ConfiguredOptimizer):
@@ -2418,10 +2396,7 @@ class _EMNA(base.Optimizer):
         self.sigma: tp.Union[float, np.ndarray]
         if initial_popsize is None:
             initial_popsize = self.dimension
-        if self.isotropic:
-            self.sigma = 1.0
-        else:
-            self.sigma = np.ones(self.dimension)
+        self.sigma = 1.0 if self.isotropic else np.ones(self.dimension)
         # population size and parent size initializations
         self.popsize = _PopulationSizeController(
             llambda=4 * initial_popsize, mu=initial_popsize, dimension=self.dimension, num_workers=num_workers
@@ -2605,7 +2580,8 @@ class NGOptBase(base.Optimizer):
     def optim(self) -> base.Optimizer:
         if self._optim is None:
             self._optim = self._select_optimizer_cls()(self.parametrization, self.budget, self.num_workers)
-            self._optim = self._optim if not isinstance(self._optim, NGOptBase) else self._optim.optim
+            self._optim = self._optim.optim if isinstance(self._optim, NGOptBase) else self._optim
+
             logger.debug("%s selected %s optimizer.", *(x.name for x in (self, self._optim)))
         return self._optim
 
@@ -2614,40 +2590,29 @@ class NGOptBase(base.Optimizer):
         assert self.budget is not None
         if self.has_noise and self.has_discrete_not_softmax:
             # noise and discrete: let us merge evolution and bandits.
-            cls: base.OptCls = DoubleFastGADiscreteOnePlusOne if self.dimension < 60 else CMA
-        else:
-            if self.has_noise and self.fully_continuous:
+            return DoubleFastGADiscreteOnePlusOne if self.dimension < 60 else CMA
+        elif self.has_noise and self.fully_continuous:
                 # This is the real of population control. FIXME: should we pair with a bandit ?
-                cls = TBPSA
-            else:
-                if (
+            return TBPSA
+        elif (
                     self.has_discrete_not_softmax
                     or not self.parametrization.function.metrizable
                     or not self.fully_continuous
                 ):
-                    cls = DoubleFastGADiscreteOnePlusOne
-                else:
-                    if self.num_workers > self.budget / 5:
-                        if self.num_workers > self.budget / 2.0 or self.budget < self.dimension:
-                            cls = MetaRecentering
-                        else:
-                            cls = NaiveTBPSA
-                    else:
-                        # Possibly a good idea to go memetic for large budget, but something goes wrong for the moment.
-                        if (
+            return DoubleFastGADiscreteOnePlusOne
+        elif self.num_workers > self.budget / 5:
+            return MetaRecentering if self.num_workers > self.budget / 2.0 or self.budget < self.dimension else NaiveTBPSA
+
+        elif (
                             self.num_workers == 1 and self.budget > 6000 and self.dimension > 7
                         ):  # Let us go memetic.
-                            cls = ChainCMAPowell
-                        else:
-                            if self.num_workers == 1 and self.budget < self.dimension * 30:
+            return ChainCMAPowell
+        elif self.num_workers == 1 and self.budget < self.dimension * 30:
                                 # One plus one so good in large ratio "dimension / budget".
-                                cls = OnePlusOne if self.dimension > 30 else Cobyla
-                            else:
+            return OnePlusOne if self.dimension > 30 else Cobyla
+        else:
                                 # DE is great in such a case (?).
-                                cls = (
-                                    DE if self.dimension > 2000 else CMA if self.dimension > 1 else OnePlusOne
-                                )
-        return cls
+            return DE if self.dimension > 2000 else CMA if self.dimension > 1 else OnePlusOne
 
     def _internal_ask_candidate(self) -> p.Parameter:
         return self.optim.ask()
@@ -2711,70 +2676,59 @@ class NGOpt4(NGOptBase):
                 optimClass = DiscreteOnePlusOne
             else:
                 optimClass = AdaptiveDiscreteOnePlusOne if self._arity < 5 else CMandAS2
-        else:
-            # pylint: disable=too-many-nested-blocks
-            if self.has_noise and self.fully_continuous and self.dimension > 100:
-                # Waow, this is actually a discrete algorithm.
-                optimClass = ConfSplitOptimizer(
-                    num_optims=13, progressive=True, multivariate_optimizer=OptimisticDiscreteOnePlusOne
+        elif self.has_noise and self.fully_continuous and self.dimension > 100:
+            # Waow, this is actually a discrete algorithm.
+            optimClass = ConfSplitOptimizer(
+                num_optims=13, progressive=True, multivariate_optimizer=OptimisticDiscreteOnePlusOne
+            )
+        elif self.has_noise and self.fully_continuous:
+            if budget > 100:
+                optimClass = (
+                    OnePlusOne if self.noise_from_instrumentation or self.num_workers > 1 else SQP
                 )
             else:
-                if self.has_noise and self.fully_continuous:
-                    if budget > 100:
-                        optimClass = (
-                            OnePlusOne if self.noise_from_instrumentation or self.num_workers > 1 else SQP
-                        )
-                    else:
-                        optimClass = OnePlusOne
-                else:
-                    if self.has_discrete_not_softmax or not funcinfo.metrizable or not self.fully_continuous:
-                        optimClass = DoubleFastGADiscreteOnePlusOne
-                    else:
-                        if num_workers > budget / 5:
-                            if num_workers > budget / 2.0 or budget < self.dimension:
-                                optimClass = MetaTuneRecentering
-                            elif self.dimension < 5 and budget < 100:
-                                optimClass = DiagonalCMA
-                            elif self.dimension < 5 and budget < 500:
-                                optimClass = Chaining([DiagonalCMA, MetaModel], [100])
-                            else:
-                                optimClass = NaiveTBPSA
-                        else:
-                            # Possibly a good idea to go memetic for large budget, but something goes wrong for the moment.
-                            if (
+                optimClass = OnePlusOne
+        elif self.has_discrete_not_softmax or not funcinfo.metrizable or not self.fully_continuous:
+            optimClass = DoubleFastGADiscreteOnePlusOne
+        elif num_workers > budget / 5:
+            if num_workers > budget / 2.0 or budget < self.dimension:
+                optimClass = MetaTuneRecentering
+            elif self.dimension < 5 and budget < 100:
+                optimClass = DiagonalCMA
+            elif self.dimension < 5 and budget < 500:
+                optimClass = Chaining([DiagonalCMA, MetaModel], [100])
+            else:
+                optimClass = NaiveTBPSA
+        elif (
                                 num_workers == 1 and budget > 6000 and self.dimension > 7
                             ):  # Let us go memetic.
-                                optimClass = ChainNaiveTBPSACMAPowell
-                            else:
-                                if num_workers == 1 and budget < self.dimension * 30:
-                                    if (
-                                        self.dimension > 30
-                                    ):  # One plus one so good in large ratio "dimension / budget".
-                                        optimClass = OnePlusOne
-                                    elif self.dimension < 5:
-                                        optimClass = MetaModel
-                                    else:
-                                        optimClass = Cobyla
-                                else:
-                                    if self.dimension > 2000:  # DE is great in such a case (?).
-                                        optimClass = DE
-                                    else:
-                                        if self.dimension < 10 and budget < 500:
-                                            optimClass = MetaModel
-                                        else:
-                                            if (
+            optimClass = ChainNaiveTBPSACMAPowell
+        elif num_workers == 1 and budget < self.dimension * 30:
+            if (
+                self.dimension > 30
+            ):  # One plus one so good in large ratio "dimension / budget".
+                optimClass = OnePlusOne
+            elif self.dimension < 5:
+                optimClass = MetaModel
+            else:
+                optimClass = Cobyla
+        elif self.dimension > 2000:  # DE is great in such a case (?).
+            optimClass = DE
+        elif self.dimension < 10 and budget < 500:
+            optimClass = MetaModel
+        elif (
                                                 self.dimension > 40
                                                 and num_workers > self.dimension
                                                 and budget < 7 * self.dimension**2
                                             ):
-                                                optimClass = DiagonalCMA
-                                            elif (
-                                                3 * num_workers > self.dimension**2
-                                                and budget > self.dimension**2
-                                            ):
-                                                optimClass = MetaModel
-                                            else:
-                                                optimClass = CMA
+            optimClass = DiagonalCMA
+        elif (
+            3 * num_workers > self.dimension**2
+            and budget > self.dimension**2
+        ):
+            optimClass = MetaModel
+        else:
+            optimClass = CMA
         return optimClass
 
 
@@ -2817,10 +2771,9 @@ class NGOpt8(NGOpt4):
 
     def _num_objectives_set_callback(self) -> None:
         super()._num_objectives_set_callback()
-        if self.num_objectives > 1:
-            if self.noise_from_instrumentation or not self.has_noise:
-                # override at runtime
-                self._optim = DE(self.parametrization, self.budget, self.num_workers)
+        if self.num_objectives > 1 and (self.noise_from_instrumentation or not self.has_noise):
+            # override at runtime
+            self._optim = DE(self.parametrization, self.budget, self.num_workers)
 
 
 @registry.register
